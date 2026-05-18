@@ -1,7 +1,9 @@
+// Copyright (c) 2026 OpenBao a Series of LF Projects, LLC
+// SPDX-License-Identifier: MPL-2.0
+
 package main
 
 import (
-	"log"
 	"os"
 
 	"github.com/openbao/openbao-plugins/database/typesense"
@@ -14,14 +16,6 @@ func main() {
 	flags := apiClientMeta.FlagSet()
 	flags.Parse(os.Args[1:])
 
-	if err := Run(); err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
-}
-
-func Run() error {
 	// ServeMultiplex directly takes the factory function in the v5 interface
 	dbplugin.ServeMultiplex(typesense.New)
-	return nil
 }
