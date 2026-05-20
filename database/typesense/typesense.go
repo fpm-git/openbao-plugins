@@ -26,14 +26,14 @@ func New() (interface{}, error) {
 // typesenseDB implements the dbplugin.Database interface
 type typesenseDB struct {
 	client *typesense.Client
-	apiURL string
+	// apiKey is retained to allow the error sanitizer middleware to redact it from errors/logs
 	apiKey string
 }
 
 // secretValues tells the sanitizer which strings to redact from logs/errors
 func (db *typesenseDB) secretValues() map[string]string {
 	return map[string]string{
-		db.apiKey: "[typesense-admin-key]",
+		db.apiKey: "[typesense-api-key]",
 	}
 }
 
@@ -48,10 +48,9 @@ func (db *typesenseDB) Initialize(ctx context.Context, req dbplugin.InitializeRe
 		return dbplugin.InitializeResponse{}, errors.New("api_key is required")
 	}
 
-	db.apiURL = apiURL
 	db.apiKey = apiKey
 	db.client = typesense.NewClient(
-		typesense.WithServer(db.apiURL),
+		typesense.WithServer(apiURL),
 		typesense.WithAPIKey(db.apiKey),
 		typesense.WithConnectionTimeout(10*time.Second),
 	)
