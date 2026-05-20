@@ -6,10 +6,8 @@ package typesense
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"testing"
 	"time"
 
@@ -18,6 +16,7 @@ import (
 	"github.com/ory/dockertest/v3/docker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/typesense/typesense-go/typesense"
 )
 
 type TypesenseTestConfig struct {
@@ -68,35 +67,21 @@ func SetupEphemeralTypesense(t *testing.T) (TypesenseTestConfig, func()) {
 	hostPort := resource.GetPort(internalPort)
 	hostAddress := fmt.Sprintf("http://localhost:%s", hostPort)
 
+	client := typesense.NewClient(
+		typesense.WithServer(hostAddress),
+		typesense.WithAPIKey(adminAPIKey),
+		typesense.WithConnectionTimeout(2*time.Second),
+	)
+
 	pool.MaxWait = 60 * time.Second
 	err = pool.Retry(func() error {
-		healthURL := fmt.Sprintf("%s/health", hostAddress)
-		resp, err := http.Get(healthURL)
+		ok, err := client.Health(context.Background(), 2*time.Second)
 		if err != nil {
-			return fmt.Errorf("Typesense network listener is not yet active: %w", err)
+			return fmt.Errorf("failed to check Typesense health: %w", err)
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("Typesense returned non-ready status code: %d", resp.StatusCode)
+		if !ok {
+			return errors.New("typesense health check returned false")
 		}
-
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read Typesense health payload: %w", err)
-		}
-
-		var healthPayload struct {
-			Ok bool `json:"ok"`
-		}
-		if err := json.Unmarshal(bodyBytes, &healthPayload); err != nil {
-			return fmt.Errorf("failed to parse health payload: %w", err)
-		}
-
-		if !healthPayload.Ok {
-			return fmt.Errorf("Typesense health indicator is false")
-		}
-
 		return nil
 	})
 
