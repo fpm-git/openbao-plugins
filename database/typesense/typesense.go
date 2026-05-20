@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	dbplugin "github.com/openbao/openbao/sdk/v2/database/dbplugin/v5"
@@ -109,29 +111,44 @@ func (db *typesenseDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest)
 	}
 
 	// 4. Send request to Typesense
-	_, err = db.client.Keys().Create(ctx, &payload)
+	createdKey, err := db.client.Keys().Create(ctx, &payload)
 	if err != nil {
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create Typesense key: %w", err)
 	}
+	if createdKey == nil || createdKey.Id == nil {
+		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to retrieve created key ID from Typesense")
+	}
 
 	// 5. Return the generated username back to OpenBao so it can track it
+	// Format: <id>-<generatedUsername>
 	return dbplugin.NewUserResponse{
-		Username: generatedUsername,
+		Username: fmt.Sprintf("%d-%s", *createdKey.Id, generatedUsername),
 	}, nil
 }
 
 // DeleteUser revokes the API key from Typesense
 func (db *typesenseDB) DeleteUser(ctx context.Context, req dbplugin.DeleteUserRequest) (dbplugin.DeleteUserResponse, error) {
-	keys, err := db.client.Keys().Retrieve(ctx)
-	if err != nil {
-		return dbplugin.DeleteUserResponse{}, err
+	var keyIDToDelete int64 = -1
+
+	// Try to parse the key ID from the username (format: "<id>-<description>")
+	parts := strings.SplitN(req.Username, "-", 2)
+	if len(parts) == 2 {
+		if id, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+			keyIDToDelete = id
+		}
 	}
 
-	var keyIDToDelete int64 = -1
-	for _, k := range keys {
-		if k.Description == req.Username && k.Id != nil {
-			keyIDToDelete = *k.Id
-			break
+	if keyIDToDelete == -1 {
+		// Fallback: linear search for the key by description (for legacy leases)
+		keys, err := db.client.Keys().Retrieve(ctx)
+		if err != nil {
+			return dbplugin.DeleteUserResponse{}, err
+		}
+		for _, k := range keys {
+			if k.Description == req.Username && k.Id != nil {
+				keyIDToDelete = *k.Id
+				break
+			}
 		}
 	}
 
@@ -139,8 +156,12 @@ func (db *typesenseDB) DeleteUser(ctx context.Context, req dbplugin.DeleteUserRe
 		return dbplugin.DeleteUserResponse{}, nil // Key already gone
 	}
 
-	_, err = db.client.Key(keyIDToDelete).Delete(ctx)
+	_, err := db.client.Key(keyIDToDelete).Delete(ctx)
 	if err != nil {
+		var httpErr *typesense.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == 404 {
+			return dbplugin.DeleteUserResponse{}, nil // Key already gone
+		}
 		return dbplugin.DeleteUserResponse{}, fmt.Errorf("failed to delete key: %w", err)
 	}
 
