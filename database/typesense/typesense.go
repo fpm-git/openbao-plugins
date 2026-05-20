@@ -12,9 +12,13 @@ import (
 	"time"
 
 	dbplugin "github.com/openbao/openbao/sdk/v2/database/dbplugin/v5"
+	"github.com/openbao/openbao/sdk/v2/helper/template"
 	"github.com/typesense/typesense-go/typesense"
 	"github.com/typesense/typesense-go/typesense/api"
 )
+
+const defaultUsernameTemplate = `{{ printf "v-%s-%s-%s" (.DisplayName | truncate 20) (.RoleName | truncate 20) (unix_time) }}`
+
 
 // New returns a new Typesense database implementation.
 func New() (interface{}, error) {
@@ -74,8 +78,16 @@ func (db *typesenseDB) Initialize(ctx context.Context, req dbplugin.InitializeRe
 // NewUser creates a new API key in Typesense
 func (db *typesenseDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (dbplugin.NewUserResponse, error) {
 	// 1. Generate the username dynamically using OpenBao's contextual metadata
-	// Example: v-myusername-myrole-1678829283
-	generatedUsername := fmt.Sprintf("v-%s-%s-%d", req.UsernameConfig.DisplayName, req.UsernameConfig.RoleName, time.Now().Unix())
+	up, err := template.NewTemplate(template.Template(defaultUsernameTemplate))
+	if err != nil {
+		return dbplugin.NewUserResponse{}, fmt.Errorf("unable to initialize username template: %w", err)
+	}
+
+	generatedUsername, err := up.Generate(req.UsernameConfig)
+	if err != nil {
+		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to generate username: %w", err)
+	}
+
 
 	// 2. Prepare the Typesense Key payload
 	payloadStr := `{"actions": ["*"], "collections": ["*"]}`
@@ -97,7 +109,7 @@ func (db *typesenseDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest)
 	}
 
 	// 4. Send request to Typesense
-	_, err := db.client.Keys().Create(ctx, &payload)
+	_, err = db.client.Keys().Create(ctx, &payload)
 	if err != nil {
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create Typesense key: %w", err)
 	}
