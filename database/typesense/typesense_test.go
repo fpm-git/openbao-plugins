@@ -141,6 +141,16 @@ func TestTypesensePlugin_Integration(t *testing.T) {
 	require.NoError(t, err, "NewUser should successfully create an API key")
 	assert.NotEmpty(t, newUserResp.Username, "NewUser should return the generated username description")
 
+	// 2b. Verify key validity directly against Typesense
+	userClient := typesense.NewClient(
+		typesense.WithServer(config.Address),
+		typesense.WithAPIKey(newUserReq.Password),
+		typesense.WithConnectionTimeout(2*time.Second),
+	)
+
+	_, err = userClient.Collections().Retrieve(ctx)
+	require.NoError(t, err, "Should be able to retrieve collections using the generated key")
+
 	// 3. Delete User
 	deleteUserReq := dbplugin.DeleteUserRequest{
 		Username: newUserResp.Username,
@@ -148,4 +158,8 @@ func TestTypesensePlugin_Integration(t *testing.T) {
 
 	_, err = db.DeleteUser(ctx, deleteUserReq)
 	require.NoError(t, err, "DeleteUser should successfully remove the created API key")
+
+	// 3b. Verify key invalidity directly against Typesense
+	_, err = userClient.Collections().Retrieve(ctx)
+	require.Error(t, err, "Should fail to retrieve collections after the key is deleted")
 }
